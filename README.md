@@ -1,5 +1,5 @@
-# Credit-Migration
-Credit Portfolio VaR with Rating Migrations
+# Credit Portfolio VaR with Rating Migrations
+
 This project implements a structural credit portfolio model to calibrate correlation parameters and calculate Credit Value-at-Risk (VaR) based on rating migrations data.
 Project Overview
 The project addresses the sensitivity of Credit Portfolio VaR to the correlation parameter (ρ) between standardized asset returns, which is an unobservable parameter that remains challenging to calibrate from historical data.
