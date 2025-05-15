@@ -4,60 +4,100 @@ clc
 warning('off', 'all')
 format long
 
-%%
+%% Add path
 
-% Joint migration matrix from CreditMetrics Table 8.2
-% Rows: Final rating of BBB-rated firm
-% Columns: Final rating of A-rated firm
-% Ratings: AAA, AA, A, BBB, BB, B, CCC, Default
+addpath("Bootstrap/");
+addpath("Data/")
 
-joint_counts = [
-     0,     0,     0,     0,     0,     0,    0,    0;
-     0,    15,  1105,    54,     4,     0,    0,    0;
-     0,   978, 44523,  2812,   414,   224,    0,    0;
-     0, 12436,621477, 40584,  5075,  2507,    0,    0;
-     0,   839, 41760,  2921,   321,   193,    0,    0;
-     0,   175,  7081,   532,    76,    48,    0,    0;
-     0,    55,  2230,   127,    18,    15,    0,    0;
-     0,    29,   981,    67,     7,     0,    0,    0
-];
+%% Load market data Mac/Linux
+load("data.mat")
+load('transition_matrix.mat');
+load('empirical_joint_prob.mat')
 
-% total number of cases
-N=sum(sum(joint_counts));
+%% Bootstrap
+[all_dates, all_discounts] = bootstrap(datesSet, ratesSet);
 
-% Historically tabulated joint credit quality co-movement
-empirical_joint_prob=joint_counts/N;
+% yearfrac conventions:
+YF_ACT_365 = 3;
+YF_ACT_360 = 2;
+YF_30_360 = 6;
 
+settlement_date = datenum(datetime('02/02/2023', 'InputFormat', 'dd/MM/yyyy'));
+end_date = datenum(datetime(settlement_date, 'ConvertFrom', 'datenum') + years(2));
+dates = getDates(settlement_date, end_date, 'quarterly', 'forward');
+dates = dates(3:2:end);
+discounts = getDiscounts(all_dates, all_discounts, datenum(dates), settlement_date);
 
-marginal_A = sum(empirical_joint_prob, 1);    % sum over rows
-marginal_BBB = sum(empirical_joint_prob, 2);  % sum over columns
+%% point a
 
-
-% Cumulative distributions
-cdf_A = cumsum(marginal_A);        % 1×8
-cdf_BBB = cumsum(marginal_BBB);    % 8×1
+marginal_A = sum(empirical_joint_prob, 1);  
+marginal_BBB = sum(empirical_joint_prob, 2);
+cdf_A = cumsum(marginal_A);
+cdf_BBB = cumsum(marginal_BBB);
 z_A = [-Inf, norminv(cdf_A)];       % 1×9: thresholds for A
 z_BBB = [-Inf; norminv(cdf_BBB)];   % 9×1: thresholds for BBB
 
-rng(18);  % Set random seed
-
-mc_simulations =1000000;
-obligor_num = 7;
-
-%y = randn(mc_simulations, 1);              % Common factor (Y)
-%z = randn(mc_simulations, issuers_num);    % Idiosyncratic shocks (ei)
-
-
-bivariate_normal_cdf = @(x, y, rho) mvncdf([x, y], [0, 0], [1, rho; rho, 1]);
-
-modes = {'MSE', 'MAE', 'likelihood', 'gradient_descent'};
-P_results = cell(1, length(modes));
-
+%modes = {'MSE', 'MAE', 'likelihood', 'gradient_descent'};
+modes = {'MAE'};
 for i = 1:length(modes)
     mode = modes{i};
     [calibrated_rho, loss_value] = calibrate_rho(empirical_joint_prob, z_BBB, z_A, mode);
-    P_results{i} = calculate_theoretical_joint_probs(z_BBB, z_A, calibrated_rho);
-    plot_objective_function(empirical_joint_prob, z_BBB, z_A, mode);
+    %plot_objective_function(empirical_joint_prob, z_BBB, z_A, mode);
 end
 
+%% Point b.a
+
+% Initialize parameters
+rho = calibrated_rho;
+recovery_rate = 0.4;
+M = 100000;
+confidence_level = 0.999;
+
+% Prepare rating transition data
+defaults = transition_matrix(:,8);
+rating_spreads = -log((1 - (1 - recovery_rate) .* defaults));
+initial_portfolio_value = compute_initial_portfolio_value(transition_matrix, recovery_rate, discounts);
+thresholds = calculate_thresholds(transition_matrix);
+
+% Set up Monte Carlo simulation
+rng('shuffle');
+Y = randn(M, 1);                        
+e_A = randn(M, 50);                     
+e_BBB = randn(M, 50);
+v_A = sqrt(rho) * Y + sqrt(1 - rho) * e_A;
+v_BBB = sqrt(rho) * Y + sqrt(1 - rho) * e_BBB;
+
+% Define computation function
+bond_values = @(v_mat, threshold) arrayfun(@(m) ...
+    sum(calculate_bond_values(v_mat(m, :)', threshold, ...
+    discounts, recovery_rate, defaults)), 1:size(v_mat,1));
+
+% Run simulation
+portfolio_value_A = bond_values(v_A, thresholds(3,:));
+portfolio_value_B = bond_values(v_BBB, thresholds(4,:));
+
+portfolio_value_1y = portfolio_value_A + portfolio_value_B;
+portfolio_losses = initial_portfolio_value - portfolio_value_1y;
+
+% Calculate VaR and plot results
+var = prctile(portfolio_losses, confidence_level * 100)
+plot_portfolio_losses(portfolio_losses, var, confidence_level);
+
+%% Point b.b
+
+rho_A = calculateBaselCorrelation(defaults(3));
+rho_B = calculateBaselCorrelation(defaults(4));
+v_A = sqrt(rho_A) * Y + sqrt(1 - rho_A) * e_A;
+v_BBB = sqrt(rho_B) * Y + sqrt(1 - rho_B) * e_BBB;
+
+
+portfolio_value_A = bond_values(v_A, thresholds(3,:));
+portfolio_value_B = bond_values(v_BBB, thresholds(4,:));
+
+portfolio_value_1y = portfolio_value_A + portfolio_value_B;
+portfolio_losses = initial_portfolio_value - portfolio_value_1y;
+
+% Calculate VaR and plot results
+var = prctile(portfolio_losses, confidence_level * 100)
+plot_portfolio_losses(portfolio_losses, var, confidence_level);
 
