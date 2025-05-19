@@ -4,9 +4,10 @@ function initial_value = compute_initial_portfolio_value(transition_matrix, reco
     pd_BBB = transition_matrix2y(4, end);   % BBB-rated (row 4)
 
     % Compute bond prices using expected loss
-    price_A = (1 - pd_A * (1 - recovery_rate)) * discounts(2);
-    price_BBB = (1 - pd_BBB * (1 - recovery_rate)) * discounts(2);
+    price_A = ((1 - pd_A)* discounts(4)+(pd_A * recovery_rate)* discounts(2));
+    price_BBB = ((1 - pd_BBB)* discounts(4)+(pd_BBB * recovery_rate)* discounts(2));
 
     % Total portfolio value: 50 A-rated + 50 BBB-rated bonds
     initial_value = 50 * price_A + 50 * price_BBB;
 end
+

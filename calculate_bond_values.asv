@@ -1,4 +1,4 @@
-function [bond_values, ratings] = calculate_bond_values(V, thresholds, forwardPrices,M)
+function [bond_values, rating_indices] = calculate_bond_values(V, thresholds, forwardPrices,M)
 
 % reshape V to 50 x 1 x 1000
 V_exp = reshape(V, size(V,1), 1, size(V,2));  % 50 x 1 x 1000
@@ -10,10 +10,8 @@ thresholds_row = reshape(thresholds, 1, length(thresholds), 1);  % 1 x T x 1
 comparison_matrix = V_exp < thresholds_row;     % 50 x T x 1000
 rating_indices = sum(comparison_matrix, 2); % 50 x 1 x 1000
 rating_indices = reshape(rating_indices, [], 1);  % (50*1000) x 1
-ratings = zeros(1,8);
-for i=1:8
- ratings(i) = sum(rating_indices(:)==i);
-end
+for i=1:
+
 % Final bond value per column:
 b_values = forwardPrices(rating_indices);         % (50*1000) x 1
 b_values = reshape(b_values, size(V));            % 50 x 1000
