@@ -1,23 +1,35 @@
-function VaR_ex = compute_VaR_for_rho(rho,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,frwdis6mesi,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB)
+function [VaR_ex, lossexd, avgdowngrade]  = compute_VaR_for_rho(rho,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB)
 %
 % Computes the 99% Monte Carlo Value at Risk (VaR) for a credit portfolio of zero-coupon bonds,
 % using a single-factor Gaussian copula model, including default and migration risk.
+%
+% INPUTS:
+%   rho              : scalar, common asset correlation (used if flag == 1)
+%   transition_matrix: [8x8] rating transition matrix (1-year horizon)
+%   df_1y2ydef       : [8x1] discount factors for each rating in year 2 (including default recovery)
+%   df_expiry        : [nx1] vector of discount factors for selected payment dates
+%   bond_mtm_A       : mark-to-market price of a 2-year bond initially rated A
+%   bond_mtm_BBB     : mark-to-market price of a 2-year bond initially rated BBB
+%   face_value       : face value of each bond
+%   recovery_rate    : recovery rate in case of default
+%   mc_simulations   : number of Monte Carlo simulations
+%   issuers_num_A    : number of bonds initially rated A
+%   issuers_num_BBB  : number of bonds initially rated BBB
+%   seed             : random seed for reproducibility
+%   flag             : 1 to use scalar rho, 2 to use rho_A and rho_BBB separately
+%   rho_A            : correlation for A-rated issuers (used if flag == 2)
+%   rho_BBB          : correlation for BBB-rated issuers (used if flag == 2)
+%
+% OUTPUTS:
+%   VaR_ex           : estimated 99.9% Monte Carlo Value at Risk
+%   lossexd          : [mc_simulations x 1] vector of simulated total portfolio losses
 %%
-
-% Set rating numbers for readability
-rating_AAA=1;
-rating_AA=2;
-rating_A = 3; 
-rating_BBB= 4;
-rating_BB= 5;
-rating_B= 6;
-rating_CCC= 7;
-rating_def = 8;
+% Parameters
+rating_A = 3;
+rating_BBB = 4;
 
 % Set the seed
 rng(seed);
-
-total_issuers_num = issuers_num_A + issuers_num_BBB;  % total number of bonds (100)
 
 % Generate idiosyncratic shocks for each issuer and a common systematic
 % factor
@@ -34,149 +46,75 @@ elseif flag == 2
     v_BBB = sqrt(rho_BBB) * y + sqrt(1 - rho_BBB) * epsilon_BBB;
 end
 
-%%
-% % other model
-% if flag == 1
-%     % Single-factor latent variable model
-%     v_A = rho * y + sqrt(1 - rho^2) * epsilon_A;
-%     v_BBB = rho * y + sqrt(1 - rho^2) * epsilon_BBB;
-% elseif flag == 2
-%     v_A = rho_A * y + sqrt(1 - rho_A^2) * epsilon_A;
-%     v_BBB = rho_BBB * y + sqrt(1 - rho_BBB^2) * epsilon_BBB;
-% end
+%% Compute thresholds 
 
+barriers_downgrade_A = compute_barriers(transition_matrix,rating_A);
 
-%%
-% Compute default threshold using inverse CDF for A
-barrier_downgrade_A_def=norminv(transition_matrix(rating_A,rating_def));
-barrier_downgrade_A_CCC=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_CCC)));
-barrier_downgrade_A_B=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_B)));
-barrier_downgrade_A_BB=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_BB)));
-barrier_downgrade_A_BBB=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_BBB)));
-barrier_downgrade_A_A=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_A)));
-barrier_downgrade_A_AA=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_AA)));
-barrier_downgrade_A_AAA=norminv(sum(transition_matrix(rating_A,rating_def:-1:rating_AAA)));
+barriers_downgrade_BBB = compute_barriers(transition_matrix,rating_BBB);
 
-% Compute default threshold using inverse CDF for BBB
-barrier_downgrade_BBB_def=norminv(transition_matrix(rating_BBB,rating_def));
-barrier_downgrade_BBB_CCC=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_CCC)));
-barrier_downgrade_BBB_B=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_B)));
-barrier_downgrade_BBB_BB=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_BB)));
-barrier_downgrade_BBB_BBB=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_BBB)));
-barrier_downgrade_BBB_A=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_A)));
-barrier_downgrade_BBB_AA=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_AA)));
-barrier_downgrade_BBB_AAA=norminv(sum(transition_matrix(rating_BBB,rating_def:-1:rating_AAA)));
+edges_A = [-Inf, barriers_downgrade_A];        % 8 soglie → 9 intervalli
+edges_BBB = [-Inf, barriers_downgrade_BBB];    % stessa cosa
+  
+states_A = 9 - discretize(v_A, edges_A);             % dimensione: [mc_simulations × issuers_num_A]
+
+states_BBB = 9 - discretize(v_BBB, edges_BBB);     % dimensione: [mc_simulations × issuers_num_BBB]
 
 %% Compute number of defaults and downgrades for issuers with initial rating A
+% Conta quanti bond vanno in ciascun rating (1 = AAA, 8 = Default), per ogni simulazione
+% columns ii matrix counts: 1 = AAA, 2 = AA, 3 = A, 4 = BBB, 5 = BB, 6 = B, 7 = CCC, 8 = Default
 
-% count the number of defaults for each simulation
-vecdef_A = sum(v_A < barrier_downgrade_A_def, 2);    % sum over each row
+counts_A = zeros(mc_simulations, 8);
+counts_BBB = zeros(mc_simulations, 8);
 
-% count the number of downgrade to CCC for each simulation
-vecdown_A_CCC = sum((v_A < barrier_downgrade_A_CCC) & (v_A >= barrier_downgrade_A_def), 2);
-% count the number of downgrade to B for each simulation
-vecdown_A_B = sum((v_A < barrier_downgrade_A_B) & (v_A >= barrier_downgrade_A_CCC), 2);
-% count the number of downgrade to BB for each simulation
-vecdown_A_BB = sum((v_A < barrier_downgrade_A_BB) & (v_A >= barrier_downgrade_A_B), 2);
-% count the number of downgrade to BBB for each simulation
-vecdown_A_BBB = sum((v_A < barrier_downgrade_A_BBB) & (v_A >= barrier_downgrade_A_BB), 2);
-% count the number of issuers that remain in A for each simulation
-vecdown_A_A = sum((v_A < barrier_downgrade_A_A) & (v_A >= barrier_downgrade_A_BBB), 2);
-% count the number of upgrade to AA for each simulation
-vecdown_A_AA = sum((v_A < barrier_downgrade_A_AA) & (v_A >= barrier_downgrade_A_A), 2);
-% count the number of upgrade to AAA for each simulation
-vecdown_A_AAA = sum((v_A < barrier_downgrade_A_AAA) & (v_A >= barrier_downgrade_A_AA), 2);
+for ii = 1:8
+    counts_A(:, ii) = sum(states_A == ii, 2);  % Conta quante volte rating i compare per ogni riga
+    counts_BBB(:, ii) = sum(states_BBB == ii, 2);  % Conta quante volte rating i compare per ogni riga
+end
 
-vectdown_A=[vecdown_A_CCC, vecdown_A_B, vecdown_A_BB, vecdown_A_BBB, vecdown_A_A, vecdown_A_AA,vecdown_A_AAA];
-
-%% Compute number of defaults and downgrades for issuers with initial rating BBB
-% count the number of defaults for each simulation
-vecdef_BBB = sum(v_BBB < barrier_downgrade_BBB_def, 2);    % sum over each row
-
-% count the number of downgrade to CCC for each simulation
-vecdown_BBB_CCC = sum((v_BBB < barrier_downgrade_BBB_CCC) & (v_BBB >= barrier_downgrade_BBB_def), 2);
-% count the number of downgrade to B for each simulation
-vecdown_BBB_B = sum((v_BBB < barrier_downgrade_BBB_B) & (v_BBB >= barrier_downgrade_BBB_CCC), 2);
-% count the number of downgrade to BB for each simulation
-vecdown_BBB_BB = sum((v_BBB < barrier_downgrade_BBB_BB) & (v_BBB >= barrier_downgrade_BBB_B), 2);
-% count the number of issuers that remain in A for each simulation
-vecdown_BBB_BBB = sum((v_BBB < barrier_downgrade_BBB_BBB) & (v_BBB >= barrier_downgrade_BBB_BB), 2);
-% count the number of upgrade to A for each simulation
-vecdown_BBB_A = sum((v_BBB < barrier_downgrade_BBB_A) & (v_BBB >= barrier_downgrade_BBB_BBB), 2);
-% count the number of upgrade to AA for each simulation
-vecdown_BBB_AA = sum((v_BBB < barrier_downgrade_BBB_AA) & (v_BBB >= barrier_downgrade_BBB_A), 2);
-% count the number of upgrade to AAA for each simulation
-vecdown_BBB_AAA = sum((v_BBB < barrier_downgrade_BBB_AAA) & (v_BBB >= barrier_downgrade_BBB_AA), 2);
-
-vectdown_BBB=[vecdown_BBB_CCC, vecdown_BBB_B, vecdown_BBB_BB, vecdown_BBB_BBB, vecdown_BBB_A, vecdown_BBB_AA,vecdown_BBB_AAA];
 
 %%
-vecstay_A = vecdown_A_A;
+% vecstay_A = vecdown_A_A;
 
-% Compute average number of downgrades
-avgdowngrade_CCC = mean(vecdown_A_CCC);
-avgdowngrade_B = mean(vecdown_A_B);
-avgdowngrade_BB = mean(vecdown_A_BB);
-avgdowngrade_BBB = mean(vecdown_A_BBB);
-avgdowngrade_A = mean(vecstay_A);
-avgdowngrade_AA = mean(vecdown_A_AA);
-avgdowngrade_AAA = mean(vecdown_A_AAA);
+% Compute average number of downgrades and defaults
+% 1 = AAA, 2 = AA, 3 = A, 4 = BBB, 5 = BB, 6 = B, 7 = CCC, 8 = Default
+avgdowngrade_A = mean(counts_A(:,1:8));
+avgdowngrade_BBB = mean(counts_BBB(:,1:8));
 
-vecstay_BBB = vecdown_BBB_BBB;
-
-% Compute average number of downgrades
-avgdowngrade_CCC = mean(vecdown_A_CCC);
-avgdowngrade_B = mean(vecdown_A_B);
-avgdowngrade_BB = mean(vecdown_A_BB);
-avgdowngrade_BBB = mean(vecdown_A_BBB);
-avgdowngrade_A = mean(vecstay_A);
-avgdowngrade_AA = mean(vecdown_A_AA);
-avgdowngrade_AAA = mean(vecdown_A_AAA);
+avgdowngrade=[avgdowngrade_A; avgdowngrade_BBB];
 
 %%
-% Compute average number of defaults
-avgdefault_A = mean(vecdef_A);
-avgdefault_BBB = mean(vecdef_BBB);
+% Compute the 0-0.5-year forward discount factor
+frwdis6mesi = df_expiry(2);         % B(0;0,1/2)=B(0,1/2)/B(0,0)
 
-price1y_A = ((vecdef_A * recovery_rate * frwdis6mesi + ...
-                vecdown_A_CCC * df_1y2ydef(7) + ...
-                vecdown_A_B * df_1y2ydef(6) + ...
-                vecdown_A_BB * df_1y2ydef(5) + ...
-                vecdown_A_BBB * df_1y2ydef(4) + ...
-                vecdown_A_A * df_1y2ydef(3) + ...
-                vecdown_A_AA * df_1y2ydef(2) + ...
-                vecdown_A_AAA * df_1y2ydef(1) ...
-                ) / issuers_num_A) * face_value;
+price1y_A = ((counts_A(:,1:7) * df_1y2ydef(:) + ...
+                counts_A(:,8) * recovery_rate * frwdis6mesi ...
+                )/issuers_num_A) * face_value;
 
-price1y_BBB = ((vecdef_BBB * recovery_rate * frwdis6mesi + ...
-                vecdown_BBB_CCC * df_1y2ydef(7) + ...
-                vecdown_BBB_B * df_1y2ydef(6) + ...
-                vecdown_BBB_BB * df_1y2ydef(5) + ...
-                vecdown_BBB_BBB * df_1y2ydef(4) + ...
-                vecdown_BBB_A * df_1y2ydef(3) + ...
-                vecdown_BBB_AA * df_1y2ydef(2) + ...
-                vecdown_BBB_AAA * df_1y2ydef(1) ...
-                ) / issuers_num_BBB) * face_value;
+price1y_BBB = ((counts_BBB(:,1:7) * df_1y2ydef(:) + ...
+                counts_BBB(:,8) * recovery_rate * frwdis6mesi ...
+                )/issuers_num_BBB) * face_value;
 
-%%
-% bond_mtm=bond_mtm_A+bond_mtm_BBB;
-% Compute loss per scenario
+%% Compute loss per scenario
+
 lossexd_A = bond_mtm_A / df_expiry(3) - price1y_A;
 lossexd_BBB = bond_mtm_BBB / df_expiry(3) - price1y_BBB;
 
-% lossexd=[lossexd_A; lossexd_BBB];   % size is (2000000x1)
+% I evaluate losses in t=0 or t=1 ?
+lossexd = (lossexd_A * issuers_num_A + lossexd_BBB * issuers_num_BBB);
+% lossexd = (lossexd_A * issuers_num_A + lossexd_BBB * issuers_num_BBB)*df_expiry(3);
 
-lossexd = lossexd_A * issuers_num_A + lossexd_BBB * issuers_num_BBB;
+% % Sort losses in descending order to compute VaR
+% lossordexd = sort(lossexd, 'descend');
+% % Index of the 0.1% quantile
+% idx = ceil(0.001 * mc_simulations);
+% % Compute VaR
+% VaR_ex = lossordexd(idx);
 
-% Sort losses in descending order to compute VaR
-lossordexd = sort(lossexd, 'descend');
 
-
-% Index of the 0.1% quantile
-idx = ceil(0.001 * mc_simulations);
+confidence_level=0.999;
 
 % Compute VaR
-VaR_ex = lossordexd(idx);
+VaR_ex = prctile(lossexd, confidence_level * 100);
 
 
 end
