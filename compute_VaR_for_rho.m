@@ -60,7 +60,7 @@ states_A = 9 - discretize(v_A, edges_A);             % dimensione: [mc_simulatio
 states_BBB = 9 - discretize(v_BBB, edges_BBB);     % dimensione: [mc_simulations × issuers_num_BBB]
 
 %% Compute number of defaults and downgrades for issuers with initial rating A
-% Conta quanti bond vanno in ciascun rating (1 = AAA, 8 = Default), per ogni simulazione
+% Count how many bonds fall into each rating (1 = AAA, 8 = Default) for each simulation
 % columns ii matrix counts: 1 = AAA, 2 = AA, 3 = A, 4 = BBB, 5 = BB, 6 = B, 7 = CCC, 8 = Default
 
 counts_A = zeros(mc_simulations, 8);
