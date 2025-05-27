@@ -6,6 +6,90 @@ from scipy.stats import norm
 from datetime import datetime, date
 import calendar
 from typing import Union
+from scipy.stats import multivariate_normal
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+from scipy.stats import multivariate_normal
+
+def calculate_theoretical_joint_probs(z_bbb, z_a, rho):
+    """
+    Calcola la matrice 8×8 delle probabilità teoriche di transizione con soglie z limitate.
+    Usa multivariate_normal.cdf e sostituisce ±inf con ±10 per stabilità numerica.
+    """
+    # Limiti "grandi" al posto di ±inf
+    z_bbb = np.clip(z_bbb, -20, 20)
+    z_a = np.clip(z_a, -20, 20)
+
+    probs = np.zeros((8, 8))
+    mean = [0, 0]
+    cov = [[1, rho], [rho, 1]]
+
+    for i in range(8):
+        for j in range(8):
+            lower = [z_bbb[i], z_a[j]]
+            upper = [z_bbb[i+1], z_a[j+1]]
+
+            P11 = multivariate_normal.cdf(upper, mean=mean, cov=cov)
+            P10 = multivariate_normal.cdf([upper[0], lower[1]], mean=mean, cov=cov)
+            P01 = multivariate_normal.cdf([lower[0], upper[1]], mean=mean, cov=cov)
+            P00 = multivariate_normal.cdf(lower, mean=mean, cov=cov)
+
+            probs[i, j] = P11 - P10 - P01 + P00
+
+    return probs
+
+
+def loss_function(rho, observed, z_bbb, z_a, mode):
+    # rho arriva sempre come array di 1 elemento → estraiamolo
+    r = float(rho[0])
+    theo = calculate_theoretical_joint_probs(z_bbb, z_a, r)
+    eps = 1e-10
+
+    if mode == 'MSE':
+        return np.sum((theo - observed)**2)
+    elif mode == 'MAE':
+        return np.sum(np.abs(theo - observed))
+    elif mode == 'likelihood':
+        mask = observed > 0
+        return -np.sum(observed[mask] * np.log(theo[mask] + eps))
+    elif mode == 'KL':
+        P = observed.flatten()
+        Q = np.maximum(theo.flatten(), eps)
+        mask = P > 0
+        return np.sum(P[mask] * np.log(P[mask] / Q[mask]))
+    elif mode == 'JSD':
+        P = observed.flatten()
+        Q = np.maximum(theo.flatten(), eps)
+        M = 0.5 * (P + Q)
+        mask = M > 0
+        D1 = np.sum(P[mask] * np.log((P[mask] + eps) / (M[mask] + eps)))
+        D2 = np.sum(Q[mask] * np.log((Q[mask] + eps) / (M[mask] + eps)))
+        return 0.5 * (D1 + D2)
+    elif mode == 'weighted MSE':
+        i_idx, j_idx = np.meshgrid(np.arange(1,9), np.arange(1,9), indexing='ij')
+        W = i_idx + j_idx
+        return np.sum(W * (theo - observed)**2)
+    elif mode == 'weighted MAE':
+        i_idx, j_idx = np.meshgrid(np.arange(1,9), np.arange(1,9), indexing='ij')
+        W = i_idx + j_idx
+        return np.sum(W * np.abs(theo - observed))
+    else:
+        raise ValueError(f"Unsupported loss mode: {mode}")
+
+def calibrate_rho(observed, z_bbb, z_a, mode='MSE'):
+    """
+    Calibra rho minimizzando la loss su observed (8×8), restituisce (rho*, loss*).
+    """
+    # Vediamo il valore iniziale: magari 0.05
+    x0 = np.array([0.05])
+    bounds = [(0.0, 1.0)]
+    res = minimize(
+        fun=lambda x: loss_function(x, observed, z_bbb, z_a, mode),
+        x0=x0,
+        bounds=bounds,
+        tol=1e-10
+    )
+    return float(res.x[0]), res.fun
 
 
 def compute_barriers(transition_matrix: pd.DataFrame, rating_row: str) -> np.ndarray:
