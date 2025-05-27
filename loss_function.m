@@ -9,10 +9,18 @@ function loss = loss_function(rho, observed_joint_probs, z_BBB, z_A, mode)
             loss = sum(sum(abs(theoretical_probs - observed_joint_probs)));
         
         case 'likelihood'
+            % Small epsilon to avoid log(0)
             epsilon = 1e-10;
+        
+            % Mask for non-zero empirical probabilities
             mask = observed_joint_probs > 0;
-            log_likelihood = sum(observed_joint_probs(mask) .* log(theoretical_probs(mask) + epsilon));
-            loss = -log_likelihood;
+        
+            % Extract P (empirical) and Q (theoretical)
+            P = observed_joint_probs(mask);
+            Q = theoretical_probs(mask);
+        
+            % Log-likelihood (negative for minimization)
+            loss = -sum(P .* log(Q + epsilon));
         
         case 'KL'
             epsilon = 1e-10;

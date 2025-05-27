@@ -42,18 +42,6 @@ z_A = [-Inf, norminv(cdf_A)];       % 1×9: thresholds for A
 z_BBB = [-Inf; norminv(cdf_BBB)];   % 9×1: thresholds for BBB
 
 
-% bivariate_normal_cdf = @(x, y, rho) mvncdf([x, y], [0, 0], [1, rho; rho, 1]);
-
-% modes = {'MSE', 'MAE', 'likelihood','KL','JSD'};
-% P_results = cell(length(modes),1);
-% 
-% % modes = {'MSE', 'MAE', 'likelihood', 'weighted_MAE'};
-% % modes = {'weighted_MAE'};
-% for i = 1:length(modes)
-%     mode = modes{i};
-%     [calibrated_rho, loss_value] = calibrate_rho(empirical_joint_prob, z_BBB, z_A, mode);
-%     % plot_objective_function(empirical_joint_prob, z_BBB, z_A, mode);
-% end
 %%
 modes = {'MSE', 'MAE', 'likelihood','KL','JSD','weighted MAE','weighted MSE'};
 P_results = cell(length(modes), 1);
@@ -71,7 +59,7 @@ for i = 1:length(modes)
     );
     
     % Print the result
-    fprintf('Mode: %-12s | Calibrated ρ = %.6f | Loss = %.8e\n', mode, calibrated_rho, loss_value);
+    fprintf('Mode: %-12s | Calibrated ρ(3m) = %.6f | Loss = %.8e\n', mode, calibrated_rho, loss_value);
 
     plot_objective_function(empirical_joint_prob, z_BBB, z_A, mode);
 end
@@ -200,10 +188,12 @@ seed = 29;   % Set the seed for reproducibility
 
 mc_simulations = 1e6;   % Set the number of Monte Carlo simulations
 
+rho_annual=1-(1-rhos(7))^4;
+
 flag = 1;  % flag = 1 to use a single value of rho
 
-[VaR_ex2a, losses_ex2a, avgdowngrade_ex2a] = compute_VaR_for_rho(0.01,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,0,0);
-fprintf('\nVaR with constant rho (point 2.a):   %.7f\n', VaR_ex2a);
+[VaR_ex2a, losses_ex2a, avgdowngrade_ex2a] = compute_VaR_for_rho(rho_annual,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,0,0);
+fprintf('\nVaR with constant rho (point 2.a):   $ %.2f\n', VaR_ex2a);
 
 %% point 2.b
 S= 50;  % 50 million annual sales
@@ -218,8 +208,8 @@ rho_BBB=rho_function(pd_1y(rating_BBB));    % compute rho_A using 1y prob of def
 
 flag = 2;  % flag = 2 to use 2 values of rho: rho_A and rho_BBB
 
-[VaR_ex2b, losses_ex2b, avgdowngrade_ex2b] = compute_VaR_for_rho(0.01,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB);
-fprintf('\nVaR with Basel rho function (point 2.b):   %.7f\n', VaR_ex2b);
+[VaR_ex2b, losses_ex2b, avgdowngrade_ex2b] = compute_VaR_for_rho(rho_annual,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB);
+fprintf('\nVaR with Basel rho function (point 2.b):   $ %.2f\n', VaR_ex2b);
 
 
 %% Plot losses and VaR
@@ -227,5 +217,3 @@ fprintf('\nVaR with Basel rho function (point 2.b):   %.7f\n', VaR_ex2b);
 plot_portfolio_losses(losses_ex2a,VaR_ex2a,0.999);
 plot_portfolio_losses(losses_ex2b,VaR_ex2b,0.999);
 
-xx_A=1:length(avgdowngrade_ex2a(1,:));
-% plot(xx,)
