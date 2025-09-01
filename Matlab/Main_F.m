@@ -1,10 +1,4 @@
-% Final Project Group 4.A 
-% 
-% AY2024-2025 
-% 
-% Federico Favali
-% Amirreza Khajouei
-%
+% Final Project
 
 % Clear workspace and close all figures
 clear
