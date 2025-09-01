@@ -1,4 +1,10 @@
-% Final Project
+% Final Project Group 4.A 
+% 
+% AY2024-2025 
+% 
+% Federico Favali
+% Amirreza Khajouei
+%
 
 % Clear workspace and close all figures
 clear
@@ -38,22 +44,31 @@ z_BBB = [-Inf; norminv(cdf_BBB)];   % 9×1: thresholds for BBB
 
 %%
 modes = {'MSE', 'MAE', 'likelihood','KL','JSD','weighted MAE','weighted MSE'};
+% modes = {'MSE','weighted MSE'};
 P_results = cell(length(modes), 1);
+rhos_vector=zeros(length(modes));
 
 for i = 1:length(modes)
     mode = modes{i};
-
-    [calibrated_rho, loss_value] = calibrate_rho(empirical_joint_prob, z_BBB, z_A, mode);
     
+    fprintf('Calibrating rho for %-12s\n', mode);
+    [calibrated_rho, loss_value] = calibrate_rho(empirical_joint_prob, z_BBB, z_A, mode);
+    rhos_vector(i)=calibrated_rho;
+    fprintf('Computing CI for %-12s\n', mode);
+    [confidence_interval, method_mean, method_se] = bootstrapping_CI(empirical_joint_prob, z_BBB, z_A, mode, calibrated_rho);
+
     % Save the results in a struct
     P_results{i} = struct( ...
         'mode', mode, ...
         'rho', calibrated_rho, ...
-        'loss', loss_value ...
+        'loss', loss_value, ...
+        'CI', confidence_interval, ...
+        'mean', method_mean, ...
+        'stderr', method_se ...
     );
     
     % Print the result
-    fprintf('Mode: %-12s | Calibrated ρ(3m) = %.6f | Loss = %.8e\n', mode, calibrated_rho, loss_value);
+    fprintf('Mode: %-12s | Calibrated ρ = %.6f | Loss = %.6e | CI = [%.6f, %.6f] | std_err = %.6f\n\n', mode, calibrated_rho, loss_value, confidence_interval(1), confidence_interval(2), method_se);
 
     plot_objective_function(empirical_joint_prob, z_BBB, z_A, mode);
 end
@@ -61,6 +76,23 @@ end
 % Put rhos values in a vector
 rhos = cellfun(@(s) s.rho, P_results);
 
+%% Compare each method with weighted_MSE
+weighted_mse_idx = find(strcmp(modes, 'weighted MSE'));
+
+% Compare each method with weighted_MSE
+fprintf('\nComparing all methods with weighted MSE:\n');
+fprintf('----------------------------------------\n');
+
+for i = 1:length(modes)
+    if i ~= weighted_mse_idx % Skip comparing weighted_MSE with itself
+        compareMethods_with_refrence(modes{i}, modes{weighted_mse_idx}, ...
+            P_results{i}.mean, P_results{weighted_mse_idx}.mean, ...
+            P_results{i}.stderr, P_results{weighted_mse_idx}.stderr,700);
+    end
+end
+
+% Print all the results
+print_all_rho_results(P_results)
 
 %% point 2
 % close all
@@ -182,11 +214,9 @@ seed = 29;   % Set the seed for reproducibility
 
 mc_simulations = 1e6;   % Set the number of Monte Carlo simulations
 
-rho_annual=1-(1-rhos(7))^4;
-
 flag = 1;  % flag = 1 to use a single value of rho
 
-[VaR_ex2a, losses_ex2a, avgdowngrade_ex2a] = compute_VaR_for_rho(rho_annual,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,0,0);
+[VaR_ex2a, losses_ex2a, avgdowngrade_ex2a] = compute_VaR_for_rho(rhos(7),transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,0,0);
 fprintf('\nVaR with constant rho (point 2.a):   $ %.2f\n', VaR_ex2a);
 
 %% point 2.b
@@ -202,7 +232,7 @@ rho_BBB=rho_function(pd_1y(rating_BBB));    % compute rho_A using 1y prob of def
 
 flag = 2;  % flag = 2 to use 2 values of rho: rho_A and rho_BBB
 
-[VaR_ex2b, losses_ex2b, avgdowngrade_ex2b] = compute_VaR_for_rho(rho_annual,transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB);
+[VaR_ex2b, losses_ex2b, avgdowngrade_ex2b] = compute_VaR_for_rho(rhos(7),transition_matrix,df_1y2ydef,df_expiry,bond_mtm_A,bond_mtm_BBB,face_value,recovery_rate,mc_simulations,issuers_num_A,issuers_num_BBB,seed,flag,rho_A,rho_BBB);
 fprintf('\nVaR with Basel rho function (point 2.b):   $ %.2f\n', VaR_ex2b);
 
 

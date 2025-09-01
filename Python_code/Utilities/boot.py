@@ -1,9 +1,16 @@
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-import numpy as np
-from scipy.interpolate import CubicSpline
-from datetime import date
+import calendar
+import datetime as dt
+from datetime import datetime, date
 from enum import Enum
+from typing import Union
+
+import numpy as np
+import pandas as pd
+from dateutil.relativedelta import relativedelta
+from scipy.interpolate import CubicSpline
+from scipy.interpolate import interp1d
+
+
 class DayCount(Enum):
     EU_30_360 = 2  # EU 30/360
     ACT_360 = 0    # ACT/360
@@ -72,14 +79,8 @@ def datenum(end_date):
     delta=end_date-start_date
     return delta.days+738919
 
-def zeroRates(dates, discounts,i):
-    """
-    function to compute zero rates from discount factors
-    :param dates: dates representing the cash flow
-    :param discounts: The DF corresponding to the given date
-    :param i: index in the dates list for which the zero rate is computed
-    :return: zRates: The computed zero-coupon rate (expressed as a percentage)
-    """
+def zeroRatesi(dates, discounts,i):
+
     delta = yearfrac(dates[0], dates[i], DayCount.ACT_365.value)
     zRates = (-np.log(discounts) / delta) * 100.0
     return zRates
@@ -163,7 +164,7 @@ def bootstrap(datesSet, ratesSet):
         discounts[i] = 1 / (1 + (yearfrac(dates[0], dates[i], DayCount.ACT_360.value) * rate_mid_depos[i - 1]))
 
     # Compute Zero Rates for Futures
-    ratezz = np.array([zeroRates(dates, discounts[i + 3], i + 3) / 100 for i in range(2)])
+    ratezz = np.array([zeroRatesi(dates, discounts[i + 3], i + 3) / 100 for i in range(2)])
     datezz = np.array([datenum(dates[3]), datenum(dates[4])])
 
     # Interpolate for the first future
@@ -186,15 +187,15 @@ def bootstrap(datesSet, ratesSet):
             # If the settlement date of the current future is greater than the expiry date of the previous one,
             # use the formula to compute the discount factor based on the interpolated zero rate.
 
-            zerorate = zeroRates(dates, discounts[i + 4],i+4) / 100
+            zerorate = zeroRatesi(dates, discounts[i + 4],i+4) / 100
             B_t0_ti = np.exp(-yearfrac(dates[0], datesSet['futures'][i][0], DayCount.ACT_365.value) * zerorate)
             discounts[i + 5] = B_t0_ti * B_ti_tii
         else:
             # If the current future's start date is before the previous one, perform interpolation
 
             zerorate = np.zeros(2)
-            zerorate[0] = zeroRates(dates, discounts[i+3],i+3) / 100
-            zerorate[1] = zeroRates(dates, discounts[i+4], i + 4) / 100
+            zerorate[0] = zeroRatesi(dates, discounts[i+3],i+3) / 100
+            zerorate[1] = zeroRatesi(dates, discounts[i+4], i + 4) / 100
             datezz[0] = datenum(dates[i+3])
             datezz[1] = datenum(dates[i+4])
             zerorateinterpl = np.interp(datenum(curr_date), datezz, zerorate)
@@ -207,7 +208,7 @@ def bootstrap(datesSet, ratesSet):
 
     # Compute zero rates for swaps
     for i in range(0,2):
-        zerorate[i] = zeroRates(dates, discounts[i+7],i+7) / 100
+        zerorate[i] = zeroRatesi(dates, discounts[i+7],i+7) / 100
 
     # Interpolate zero rate for the one-year swap date
     datezz = [datenum(dates[7]), datenum(dates[8])]
@@ -233,3 +234,89 @@ def bootstrap(datesSet, ratesSet):
     discounts[12: len(datesswap) + 13 - 1] = b[1:]
 
     return dates, discounts
+
+
+
+def zeroRates(dates, discounts):
+
+    settlement = datetime(2023, 2, 2)
+    delta = np.array([yearfrac(settlement, date, 1) for date in dates[:len(discounts)]])
+    zRates = (-np.log(discounts) / delta) * 100
+
+    return zRates
+
+def business_date_offset(
+    base_date: Union[dt.date, pd.Timestamp],
+    year_offset: int = 0,
+    month_offset: int = 0,
+    day_offset: int = 0,
+) -> Union[dt.date, pd.Timestamp]:
+    """
+    Return the closest following business date to a reference date after applying the specified offset.
+
+    Parameters:
+        base_date (Union[dt.date, pd.Timestamp]): Reference date.
+        year_offset (int): Number of years to add.
+        month_offset (int): Number of months to add.
+        day_offset (int): Number of days to add.
+
+    Returns:
+        Union[dt.date, pd.Timestamp]: Closest following business date to ref_date once the specified
+            offset is applied.
+    """
+
+    # Adjust the year and month
+    total_months = base_date.month + month_offset - 1
+    year, month = divmod(total_months, 12)
+    year += base_date.year + year_offset
+    month += 1
+
+    # Adjust the day and handle invalid days
+    day = base_date.day
+    try:
+        adjusted_date = base_date.replace(
+            year=year, month=month, day=day
+        ) + dt.timedelta(days=day_offset)
+    except ValueError:
+        # Set to the last valid day of the adjusted month
+        last_day_of_month = calendar.monthrange(year, month)[1]
+        adjusted_date = base_date.replace(
+            year=year, month=month, day=last_day_of_month
+        ) + dt.timedelta(days=day_offset)
+
+    # Adjust to the closest business day
+    if adjusted_date.weekday() == 5:  # Saturday
+        adjusted_date += dt.timedelta(days=2)
+    elif adjusted_date.weekday() == 6:  # Sunday
+        adjusted_date += dt.timedelta(days=1)
+
+    return adjusted_date
+
+def getDiscount(dates, discounts, datepags):
+    """
+    Calcola i fattori di sconto per una serie di date di pagamento (datepags)
+    utilizzando i tassi zero derivati dai fattori di sconto degli strumenti.
+
+    Parametri:
+        dates: lista di datetime, dove dates[0] è la data di settlement e le altre le scadenze.
+        discounts: lista di fattori di sconto corrispondenti alle date.
+        datepags: lista (o array) di datetime per cui calcolare il fattore di sconto.
+
+    Ritorna:
+        Array numpy dei fattori di sconto per ciascuna data in datepags.
+    """
+    # La data di settlement è la prima data della lista.
+    settlement = dates[0]
+    delta = np.array([yearfrac(settlement, dp, 1) for dp in datepags])
+    zrates = zeroRates(dates[1:], discounts[1:]) / 100.0
+
+    x_instruments = np.array([yearfrac(settlement, d, 1) for d in dates[1:]])
+    x_payments = np.array([yearfrac(settlement, dp, 1) for dp in datepags])
+
+    f = interp1d(x_instruments, zrates, kind='linear', fill_value="extrapolate")
+    interpolated_rates = f(x_payments)
+
+    discount_factors = np.exp(-interpolated_rates * delta)
+
+    return discount_factors
+

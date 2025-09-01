@@ -101,15 +101,6 @@ lossexd_BBB = bond_mtm_BBB / df_expiry(3) - price1y_BBB;
 
 % I evaluate losses in t=0 or t=1 ?
 lossexd = (lossexd_A * issuers_num_A + lossexd_BBB * issuers_num_BBB);
-% lossexd = (lossexd_A * issuers_num_A + lossexd_BBB * issuers_num_BBB)*df_expiry(3);
-
-% % Sort losses in descending order to compute VaR
-% lossordexd = sort(lossexd, 'descend');
-% % Index of the 0.1% quantile
-% idx = ceil(0.001 * mc_simulations);
-% % Compute VaR
-% VaR_ex = lossordexd(idx);
-
 
 confidence_level=0.999;
 

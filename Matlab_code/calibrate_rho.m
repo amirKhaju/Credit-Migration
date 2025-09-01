@@ -3,7 +3,7 @@ function [calibrated_rho, loss_value] = calibrate_rho(observed_joint_probs, z_BB
     rho_max = 1;
     objective = @(rho) loss_function(rho, observed_joint_probs, z_BBB, z_A, mode);    
            
-    num_grid_points = 20;
+    num_grid_points = 40;
     grid_rhos = linspace(rho_min + 0.01, rho_max - 0.01, num_grid_points);
     grid_losses = zeros(size(grid_rhos));
     
